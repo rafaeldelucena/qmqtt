@@ -1,15 +1,13 @@
-#include <qmqtt_client.h>
-#include <iostream>
 #include <QObject>
 #include <QCoreApplication>
 #include <QCommandLineParser>
 #include <QTimer>
 
+#include <qmqtt_client.h>
+
 using QMQTT::Client;
 using QMQTT::Message;
 using QMQTT::Will;
-
-using namespace std;
 
 class Logger : public QObject {
     public:
@@ -17,16 +15,16 @@ class Logger : public QObject {
         }
     public slots:
         void showError(QAbstractSocket::SocketError error) {
-            cout << "error: " << error << endl;
+            qDebug() << "error" << error;
         }
         void showDisconnected() {
-            cout << "disconnected" << endl;
+            qDebug() << "disconnected";
         }
         void showPublished () {
-            cout << "published" << endl;
+            qDebug() << "published";
         }
         void showConnected() {
-            cout << "connected" << endl;
+            qDebug() << "connected";
         }
 };
 
@@ -47,8 +45,7 @@ class MyClient : public Client {
 
 int main(int argc, char ** argv)
 {
-    int id = qrand();
-    QCoreApplication a(argc, argv);
+    QCoreApplication app(argc, argv);
     QCommandLineParser parser;
     QCommandLineOption hostOption("host",
             QCoreApplication::translate("host", "The MQTT host to connect, localhost used if not defined."),
@@ -61,45 +58,45 @@ int main(int argc, char ** argv)
             "port", "1883");
 
     parser.addPositionalArgument("topic", QCoreApplication::translate("main", "Topic to subscribe"));
+    parser.addPositionalArgument("msg", QCoreApplication::translate("message", "The message to publish."));
+
     parser.addOption(hostOption);
     parser.addOption(qosOption);
     parser.addOption(portOption);
-    parser.process(a);
+    parser.process(app);
     QStringList args = parser.positionalArguments();
 
-    if (args.size() < 1) {
+    if (args.size() < 2) {
         parser.showHelp(0);
         return 0;
     }
 
+    int id = qrand();
     QString host = parser.value("host");
     quint32 port = parser.value("port").toUInt();
     QString qos = parser.value("qos");
     QString topic = args.at(0);
-
-    cout << "using: host[" << host.toStdString() << "] port[" << port << "] qos[" << qos.toStdString() << "]" << endl;
-    
-    QString message = QString("message from %1").arg(id);
+    QString message = args.at(1);
     Message msg(id, topic, message.toUtf8());
-    MyClient c(host, port);
-    c.setMessage(msg);
-    Logger p;
-    QTimer t;
-    cout << "publish on topic[" << topic.toStdString() << "]" << " with message[" << message.toStdString() << "]" << endl;
+    MyClient client(host, port);
+    Logger logger;
+    QTimer timer;
 
-    t.setInterval(1000);
+    QObject::connect(&client, &MyClient::connected, &logger, &Logger::showConnected);
+    QObject::connect(&client, &MyClient::published, &logger, &Logger::showPublished);
+    QObject::connect(&client, &MyClient::disconnected, &logger, &Logger::showDisconnected);
+    QObject::connect(&client, &MyClient::error, &logger, &Logger::showError);
+    QObject::connect(&timer, &QTimer::timeout, &client, &MyClient::sendMessage);
+    QObject::connect(&client, SIGNAL(connected()), &timer, SLOT(start()));
+    QObject::connect(&client, SIGNAL(disconnected()), &timer , SLOT(stop()));
+    QObject::connect(&app, SIGNAL(aboutToQuit()), &client, SLOT(disconnect()));
 
-    QObject::connect(&c, &MyClient::connected, &p, &Logger::showConnected);
-    QObject::connect(&c, &MyClient::published, &p, &Logger::showPublished);
-    QObject::connect(&c, &MyClient::disconnected, &p, &Logger::showDisconnected);
-    QObject::connect(&c, &MyClient::error, &p, &Logger::showError);
-    QObject::connect(&t, &QTimer::timeout, &c, &MyClient::sendMessage);
+    qDebug() << "host" << host << "port" << port << "qos" << qos << "and message" << message;
+    qDebug() << "topic" << topic << " with message" << message;
 
-    QObject::connect(&c, SIGNAL(connected()), &t, SLOT(start()));
-    QObject::connect(&c, SIGNAL(disconnected()), &t , SLOT(stop()));
-    QObject::connect(&a, SIGNAL(aboutToQuit()), &c, SLOT(disconnect()));
+    client.setMessage(msg);
+    client.connect();
+    timer.setInterval(1000);
 
-    c.connect();
-
-    return a.exec();
+    return app.exec();
 }
